@@ -6,6 +6,21 @@
         <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
         <ApplicationManifest>app.manifest</ApplicationManifest>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+        <Version>0.0.5</Version>
+        <Authors>Presire</Authors>
+        <PackageIcon>logo.png</PackageIcon>
+        <Company />
+        <AssemblyVersion>0.0.5</AssemblyVersion>
+        <Title>GetBeImage</Title>
+        <Description>thretaiplus.js用スレッド情報配信鯖から任意のBe番号が立てたスレッドに貼れれている画像をダウンロードするツール</Description>
+        <FileVersion>0.0.5</FileVersion>
+        <LangVersion>12</LangVersion>
+    </PropertyGroup>
+    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+      <PlatformTarget>x64</PlatformTarget>
+    </PropertyGroup>
+    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+      <PlatformTarget>x64</PlatformTarget>
     </PropertyGroup>
 
 
@@ -16,5 +31,63 @@
         <PackageReference Include="Avalonia.Fonts.Inter" Version="11.0.6"/>
         <!--Condition below is needed to remove Avalonia.Diagnostics package from build output in Release configuration.-->
         <PackageReference Condition="'$(Configuration)' == 'Debug'" Include="Avalonia.Diagnostics" Version="11.0.6"/>
+        <PackageReference Include="HtmlAgilityPack" Version="1.11.55" />
+        <PackageReference Include="Material.Avalonia" Version="3.1.2" />
+        <PackageReference Include="MessageBox.Avalonia" Version="3.1.5.1" />
+        <PackageReference Include="System.IO.Abstractions" Version="20.0.4" />
+    </ItemGroup>
+
+
+    <ItemGroup>
+      <None Remove="logo.png" />
+      <AvaloniaXaml Include="logo.png">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </AvaloniaXaml>
+      <AvaloniaXaml Remove="GetBeImage_Linux-x64\**" />
+      <None Remove="GetBeImage_Linux-x64\**" />
+      <AvaloniaXaml Remove="GetBeImage_Windows-x64\**" />
+      <None Remove="GetBeImage_Windows-x64\**" />
+      <AvaloniaXaml Remove="LibraryLicenses\**" />
+      <None Remove="LibraryLicenses\**" />
+      <AvaloniaXaml Remove="GetBeImage\**" />
+      <None Remove="GetBeImage\**" />
+      <None Remove="GetBeImage.zip" />
+    </ItemGroup>
+
+
+    <ItemGroup>
+      <AvaloniaXaml Remove="AboutDialog.axaml" />
+      <AvaloniaResource Include="AboutDialog.axaml">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </AvaloniaResource>
+      <AvaloniaResource Remove="GetBeImage_Linux-x64\**" />
+      <AvaloniaResource Remove="GetBeImage_Windows-x64\**" />
+      <AvaloniaResource Remove="LibraryLicenses\**" />
+      <AvaloniaResource Remove="GetBeImage\**" />
+    </ItemGroup>
+
+
+    <ItemGroup>
+      <Compile Remove="NumericOnlyTextBox.cs" />
+      <Compile Remove="GetBeImage_Linux-x64\**" />
+      <Compile Remove="GetBeImage_Windows-x64\**" />
+      <Compile Remove="LibraryLicenses\**" />
+      <Compile Remove="GetBeImage\**" />
+    </ItemGroup>
+
+
+    <ItemGroup>
+      <EmbeddedResource Remove="GetBeImage_Linux-x64\**" />
+      <EmbeddedResource Remove="GetBeImage_Windows-x64\**" />
+      <EmbeddedResource Remove="LibraryLicenses\**" />
+      <EmbeddedResource Remove="GetBeImage\**" />
+    </ItemGroup>
+
+
+    <ItemGroup>
+      <AdditionalFiles Remove="GetBeImage_Linux-x64\**" />
+      <AdditionalFiles Remove="GetBeImage_Windows-x64\**" />
+      <AdditionalFiles Remove="LibraryLicenses\**" />
+      <AdditionalFiles Remove="GetBeImage\**" />
     </ItemGroup>
 </Project>

@@ -2,8 +2,21 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        mc:Ignorable="d" d:DesignWidth="380" d:DesignHeight="350"
         x:Class="GetBeImage.AboutDialog"
-        Title="AboutDialog">
-    Welcome to Avalonia!
+        Title="About GetBeImage" Width="380" Height="350"
+        Icon="logo.png"
+        CanResize="False">
+    <StackPanel>
+        <Image Source="logo.png" Width="128" Height="128" Margin="30" HorizontalAlignment="Center"></Image>
+        <TextBlock Name="AsmText" Text="GetBeImage" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock Text="developed by Presire" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <Button Name="BtnOk" HorizontalAlignment="Center" Margin="10, 30, 10, 30" VerticalAlignment="Center" MinWidth="150" MinHeight="35" Click="btnOk_Click">
+            <Button.ContentTemplate>
+                <DataTemplate>
+                    <TextBlock Text="OK" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </DataTemplate>
+            </Button.ContentTemplate>
+        </Button>
+    </StackPanel>
 </Window>

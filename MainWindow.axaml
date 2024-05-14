@@ -2,8 +2,89 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        xmlns:getBeImage="clr-namespace:GetBeImage"
+        xmlns:global="clr-namespace:"
+        mc:Ignorable="d" d:DesignWidth="1024" d:DesignHeight="850"
         x:Class="GetBeImage.MainWindow"
-        Title="GetBeImage">
-    Welcome to Avalonia!
+        Title="GetBeImage" Width="1024" Height="850"
+        Icon="logo.png">
+    <!-- <Window.Styles> -->
+    <!--     <themes1:MaterialTheme BaseTheme="Light" PrimaryColor="Purple" SecondaryColor="Blue" /> -->
+    <!--     <Style> -->
+    <!--         <Style.Resources> -->
+    <!--             <SolidColorBrush x:Key="SolidColorBrush" Color="Red"></SolidColorBrush> -->
+    <!--         </Style.Resources> -->
+    <!--     </Style> -->
+    <!-- </Window.Styles> -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" AllowAutoHide="True">
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+        <TextBlock Text="About" TextDecorations="Underline" FontWeight="Bold" Foreground="CornflowerBlue"
+                   HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0, 10, 0, 0" FontSize="11" Cursor="Hand" PointerPressed="OpenAboutDialog_Click"/>
+        <ListBox x:Name="StatusListBox" HorizontalAlignment="Center" MinWidth="850" MaxWidth="850" MinHeight="300" MaxHeight="300"
+                 Margin="10, 30, 10, 30" ScrollViewer.AllowAutoHide="True" ScrollViewer.HorizontalScrollBarVisibility="Auto" AutoScrollToSelectedItem="True"
+                 SelectionMode="Single">
+            <ListBox.Styles>
+                <Style Selector="ListBoxItem">
+                    <Setter Property="Height" Value="35"/>
+                    <Setter Property="VerticalAlignment" Value="Center"/>
+                    <Setter Property="FontSize" Value="11"/>
+                    <Setter Property="BorderBrush" Value="Blue"/>
+                </Style>
+            </ListBox.Styles>
+            <ListBox.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Copy" Click="MenuItem_OnClick"/>
+                </ContextMenu>
+            </ListBox.ContextMenu> 
+        </ListBox>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <TextBlock Text="BE番号 : " FontSize="16" FontWeight="Medium" VerticalAlignment="Center" Margin="10"/>
+            <TextBox x:Name="InputBeText" Width="150" Margin="10" AcceptsReturn="False" TextWrapping="NoWrap"
+                     TextChanging="InputBeText_OnTextChanging"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <TextBox x:Name="SkipBox" Width="450" Height="150" AcceptsReturn="True" TextWrapping="Wrap" Margin="10"/>
+            <StackPanel Orientation="Vertical" MinWidth="250">
+                <ComboBox x:Name="ServerCombo" HorizontalAlignment="Center" MinWidth="200" MinHeight="35" Margin="10">
+                    <ComboBoxItem Content="leia"/>
+                    <ComboBoxItem Content="grata"/>
+                </ComboBox>
+                <Button Name="BtnSkip" HorizontalAlignment="Center" Margin="10" MinWidth="150" MinHeight="35" Click="addToSkip_Click">
+                    <Button.ContentTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="スキップ" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </DataTemplate>
+                    </Button.ContentTemplate>
+                </Button>
+            </StackPanel>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <CheckBox Name="ReplaceCheck" Content="" IsChecked="True" IsCheckedChanged="CheckBox_CheckChanged"/>
+            <TextBlock Name="ReplaceText" Text="leiaサーバをmaguroサーバに置きかえる。" Margin="10"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <TextBox x:Name="DirectoryText" MinWidth="300" MinHeight="35" Margin="10" TextChanged="DirectoryText_OnTextChanged"/>
+            <Button Name="BtnDirectory" HorizontalAlignment="Center" Margin="10" VerticalAlignment="Center" MinWidth="150" MinHeight="35" Click="btnSave_Click">
+                <Button.ContentTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="保存先" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </DataTemplate>
+                </Button.ContentTemplate>
+            </Button>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <Button Name="BtnStart" HorizontalAlignment="Center" Margin="10,30,10,10" VerticalAlignment="Center" MinWidth="150" MinHeight="35"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Content="開始" Click="btnStart_Click"/>
+            <Button Name="BtnStop" HorizontalAlignment="Center" Margin="10,30,10,10" VerticalAlignment="Center"  MinWidth="150" MinHeight="35" IsEnabled="False" Click="btnStop_Click">
+                <Button.ContentTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="停止" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </DataTemplate>
+                </Button.ContentTemplate>
+            </Button>
+        </StackPanel>
+        <TextBlock Text="薄荷飴" TextDecorations="Underline" FontWeight="Bold" Foreground="CornflowerBlue"
+                   HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0, 0, 0, 10" FontSize="11" Cursor="Hand" PointerPressed="OpenBrowser_Click"/>
+    </StackPanel>
+    </ScrollViewer>
 </Window>
