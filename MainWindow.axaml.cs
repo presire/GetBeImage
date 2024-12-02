@@ -1,13 +1,3 @@
-using Avalonia;
-using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
-using Avalonia.Interactivity;
-using Avalonia.Platform.Storage;
-using Avalonia.Input;
-using Avalonia.Threading;
-using Avalonia.VisualTree;
-using MsBox.Avalonia;
-using MsBox.Avalonia.Enums;
 using System;
 using System.IO;
 using System.Linq;
@@ -21,19 +11,132 @@ using System.IO.Abstractions;
 using System.Security.Principal;
 using System.Text;
 using HtmlAgilityPack;
-
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Markup.Xaml;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
+using Avalonia.Input;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
+using MsBox.Avalonia;
+using MsBox.Avalonia.Enums;
 
 namespace GetBeImage;
 
 
 public partial class MainWindow : Window
 {
+    // 通常のHTTPリクエスト用クライアント
+    private static readonly HttpClient HttpClient;
+
+    // 画像ダウンロード専用クライアント
+    private static readonly HttpClient ImageHttpClient;
+
+    // leia (maguro.2ch.sc) で取得する画像の拡張子
+    private readonly string[] _imageExtensions =
+    [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".bmp",
+        ".webp",
+        ".tiff",
+        ".svg"
+    ];
+    
+    // 静的コンストラクタ
+    static MainWindow()
+    {
+        // 通常のHTTPリクエスト用のセットアップ
+        var handler = new HttpClientHandler
+        {
+            AllowAutoRedirect = false
+        };
+        
+        HttpClient = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(15)
+        };
+
+        // 画像ダウンロード用のセットアップ
+        var imageHandler = new HttpClientHandler
+        {
+            AllowAutoRedirect = false
+        };
+        
+        ImageHttpClient = new HttpClient(imageHandler)
+        {
+            // 画像ダウンロードは長めのタイムアウトを設定
+            Timeout = TimeSpan.FromMinutes(2)
+        };
+    }
+    
     public MainWindow()
     {
         InitializeComponent();
+        
 #if DEBUG
         this.AttachDevTools();
 #endif
+        
+        // 設定の読み込みと適用
+        LoadConfigurationAsync();
+    }
+    
+    private async void LoadConfigurationAsync()
+    {
+        try
+        {
+            var config = await ConfigManager.Instance.GetConfigAsync();
+
+            // ウインドウの最大化の設定
+            if (config.Maximize)
+            {
+                WindowState = WindowState.Maximized;
+            }
+
+            // ウインドウのサイズ
+            if (config.WindowSize.Count >= 2)
+            {
+                Width = config.WindowSize[0];
+                Height = config.WindowSize[1];
+            }
+            
+            // 各コントロールへの値の設定
+            var inputBeText = this.FindControl<TextBox>("InputBeText");
+            if (inputBeText != null)
+            {
+                inputBeText.Text = config.Be;
+            }
+
+            var skipBox = this.FindControl<TextBox>("SkipBox");
+            if (skipBox != null && config.Skip.Count > 0)
+            {
+                skipBox.Text = string.Join(Environment.NewLine, config.Skip);
+            }
+            else if (skipBox != null)
+            {
+                skipBox.Text = string.Empty;
+            }
+            
+            var replaceCheck = this.FindControl<CheckBox>("ReplaceCheck");
+            if (replaceCheck != null)
+            {
+                replaceCheck.IsChecked = config.Maguro;
+            }
+            
+            var dir = this.FindControl<TextBox>("DirectoryText");
+            if (dir != null)
+            {
+                dir.Text = config.Dir;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Configuration error: {ex.Message}");
+        }
     }
 
     private void InitializeComponent()
@@ -45,7 +148,7 @@ public partial class MainWindow : Window
         statusListBox.Items.Clear();
 
         // OSによりListBoxコントロールのプロパティを付加する
-        // IsshueはListBoxOptionメソッドを参照する
+        // IssueはListBoxOptionメソッドを参照する
         ListBoxOption();
         
         var inputBeText = this.FindControl<TextBox>("InputBeText");
@@ -73,64 +176,44 @@ public partial class MainWindow : Window
         if (replaceCheck == null) return;
         
         // 選択したサーバをスキップするように設定
-        var leiaUrl = @"http://leia.2ch.net/" + Environment.NewLine + @"http://leia.5ch.net/";
-        if (replaceCheck.IsChecked == true) leiaUrl = @"https://maguro.2ch.sc/";
+        var leiaUrl = $@"http://leia.2ch.net/{Environment.NewLine}http://leia.5ch.net/";
+        if (replaceCheck.IsChecked == true) leiaUrl = $@"https://maguro.2ch.sc/";
         
         var serverUri = serverCombo.SelectedIndex == 0 ? leiaUrl : @"http://greta.5ch.net/";
         if (!string.IsNullOrEmpty(skipBox.Text)) skipBox.Text += Environment.NewLine; 
         skipBox.Text += serverUri;
     }
 
-    private List<string> _urls = new List<string>();
+    private List<string> _urls = [];
     private string? DirPath { get; set; } = "";
 
     private CancellationTokenSource _cts = new CancellationTokenSource();
     
-    public async void btnStart_Click(object sender, RoutedEventArgs e)
+    // 入力値の検証
+    private async Task<bool> ValidateInputs()
     {
-        // 各プロパティを初期化
-        _urls.Clear();
-        DirPath = string.Empty;
-        _cts = new CancellationTokenSource();
-        
-        //　ステータスをクリア
-        var statusListBox = this.FindControl<ListBox>("StatusListBox");
-        if (statusListBox == null) return;
-        statusListBox.Items.Clear();
-        
-        // ステータスのスクロールバーの位置を元に戻す (最上部に移動)
-        var scrollViewer = statusListBox.FindDescendantOfType<ScrollViewer>();
-        if (scrollViewer == null) return;
-        scrollViewer.Offset = new Vector(0, 0);
-        
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            statusListBox.InvalidateVisual();
-            scrollViewer.InvalidateVisual();
-        }, DispatcherPriority.Send);
-        
         // BE番号の確認
         var inputBe = this.FindControl<TextBox>("InputBeText");
-        if (inputBe == null)    return;
+        if (inputBe == null) return false;
 
         var beid = inputBe.Text;
         if (string.IsNullOrEmpty(beid))
         {
             await MessageBoxManager.GetMessageBoxStandard("エラー", "Be番号の設定が異常です。",
                 ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Error).ShowAsync();
-            return;
+            return false;
         }
-        
+
         // 保存先ディレクトリの確認
         var directoryText = this.FindControl<TextBox>("DirectoryText");
-        if (directoryText == null) return;
+        if (directoryText == null) return false;
 
         DirPath = directoryText.Text;
         if (string.IsNullOrEmpty(DirPath))
         {
             await MessageBoxManager.GetMessageBoxStandard("保存先の確認",
-                                                          "保存先が未指定の場合はアプリケーションと同じディレクトリとなります。",
-                                                          ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Folder).ShowAsync();
+                "保存先が未指定の場合はアプリケーションと同じディレクトリとなります。",
+                ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Folder).ShowAsync();
             var utf8Bytes = Encoding.UTF8.GetBytes(Path.Combine(Directory.GetCurrentDirectory(), "image"));
             DirPath = Encoding.UTF8.GetString(utf8Bytes);
 
@@ -144,523 +227,423 @@ public partial class MainWindow : Window
                 await MessageBoxManager.GetMessageBoxStandard("エラー",
                     $"ディレクトリ作成時にエラーが発生しました。{Environment.NewLine}{Environment.NewLine}{err.Message}",
                     ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Error).ShowAsync();
-                return;
+                return false;
             }
         }
-        
+
         if (!Directory.Exists(DirPath))
-        {   // 画像を保存するディレクトリが存在しない場合はエラー
+        {   
             await MessageBoxManager.GetMessageBoxStandard("保存先の確認",
                 "ディレクトリが存在していません。",
                 ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Error).ShowAsync();
-            return;
+            return false;
         }
-        
+
         // 画像を保存するディレクトリの書き込み権限を確認
         if (!HasWritePermission(DirPath))
-        {   // 書き込み権限がない場合はエラー
+        {   
             await MessageBoxManager.GetMessageBoxStandard("パーミッションエラー",
                 "指定したディレクトリに書き込み権限がありません。",
                 ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Error).ShowAsync();
+            return false;
+        }
+
+        return true;
+    }
+
+    // UIの有効/無効を切り替える
+    private void DisableUi()
+    {
+        var inputBe = this.FindControl<TextBox>("InputBeText");
+        if (inputBe != null) inputBe.IsEnabled = false;
+
+        var serverCombo = this.FindControl<ComboBox>("ServerCombo");
+        if (serverCombo != null) serverCombo.IsEnabled = false;
+
+        var btnSkip = this.FindControl<Button>("BtnSkip");
+        if (btnSkip != null) btnSkip.IsEnabled = false;
+
+        var skipBox = this.FindControl<TextBox>("SkipBox");
+        if (skipBox != null) skipBox.IsEnabled = false;
+
+        var replaceCheck = this.FindControl<CheckBox>("ReplaceCheck");
+        if (replaceCheck != null) replaceCheck.IsEnabled = false;
+
+        var btnDirectory = this.FindControl<Button>("BtnDirectory");
+        if (btnDirectory != null) btnDirectory.IsEnabled = false;
+
+        var directoryText = this.FindControl<TextBox>("DirectoryText");
+        if (directoryText != null) directoryText.IsEnabled = false;
+
+        var button = this.FindControl<Button>("BtnStart");
+        if (button != null)
+        {
+            button.Content = @"実行中...";
+            button.IsEnabled = false;
+        }
+
+        var stopBtn = this.FindControl<Button>("BtnStop");
+        if (stopBtn != null) stopBtn.IsEnabled = true;
+    }
+
+    // スレッドURLの取得
+    private async Task<List<string>> FetchThreadUrls(string beid, TextBox skipBox, CheckBox replaceCheck, ListBox statusListBox, CancellationToken token)
+    {
+        var urls = new List<string>();
+        
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            statusListBox.Items.Insert(statusListBox.ItemCount, $"スレッドのURLを取得しています。");
+            statusListBox.InvalidateVisual();
+        }, DispatcherPriority.Send, token);
+
+        var url = "https://ame.hacca.jp/sasss/log-be2.cgi?i=" + beid;
+        var response = await HttpClient.GetAsync(url, token);
+        response.EnsureSuccessStatusCode();
+
+        // Shift_JISエンコーディングを指定してコンテンツを読み取り
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var enc = Encoding.GetEncoding("Shift_JIS");
+        var htmlWeb = new HtmlWeb
+        {
+            OverrideEncoding = enc
+        };
+
+        htmlWeb.PreRequest += (request) =>
+        {
+            request.Timeout = 5000;
+            return true;
+        };
+        
+        var htmlDocument = htmlWeb.Load(url);  // HtmlDocumentを作成して文字列をロード
+        
+        const string xpathExpression = "//body//a/@href";
+        var urlInnerText = htmlDocument.DocumentNode.SelectNodes(xpathExpression)?
+            .Select(node => node.GetDirectInnerText())
+            .ToList();
+
+        if (urlInnerText == null)
+        {
+            await MessageBoxManager.GetMessageBoxStandard("終了",
+                $"スレッドのURLは取得できませんでした。{Environment.NewLine}BE番号が間違っているかもしれません。",
+                ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Warning).ShowAsync();
+            return urls;
+        }
+
+        var result = urlInnerText.Where(x => x != string.Empty).ToList().Skip(2).ToList();
+        result = result.Select(x => x).Where(x => Regex.IsMatch(x, @"^http.*")).ToList();
+
+        token.ThrowIfCancellationRequested();
+
+        if (replaceCheck.IsChecked != false)
+        {
+            result = result.Select(item => item.Contains(@"http://leia.2ch.net/") || item.Contains(@"http://leia.5ch.net/")
+                    ? item.Replace(@"http://leia.2ch.net/", @"https://maguro.2ch.sc/")
+                          .Replace(@"http://leia.5ch.net/", @"https://maguro.2ch.sc/")
+                    : item)
+                .ToList();
+        }
+
+        token.ThrowIfCancellationRequested();
+
+        if (!string.IsNullOrEmpty(skipBox.Text))
+        {
+            var skipUrls = skipBox.Text?.Split(Environment.NewLine).ToList() ?? new List<string>();
+            foreach (var skipUrl in skipUrls)
+            {
+                var pattern = @"^" + skipUrl;
+                result.RemoveAll(s => Regex.IsMatch(s, pattern));
+            }
+        }
+
+        urls.AddRange(result);
+
+        if (urls.Count == 0)
+        {
+            await MessageBoxManager.GetMessageBoxStandard("終了",
+                $"スレッドが見つかりません。{Environment.NewLine}スキップ設定等の確認をお願いします。",
+                ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Stop).ShowAsync();
+            return urls;
+        }
+
+        urls.Reverse();
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            statusListBox.Items.Insert(statusListBox.ItemCount, "以下に示すスレッドのURLから画像をダウンロードします。");
+        }, DispatcherPriority.Send, token);
+
+        // 各URLを処理
+        foreach (var threadUrl in urls)
+        {
+            // UIスレッドでの処理を待機
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                statusListBox.Items.Insert(statusListBox.ItemCount, threadUrl);
+                statusListBox.ScrollIntoView(statusListBox.ItemCount - 1);
+            }, DispatcherPriority.Send, token);
+    
+            // UIの更新が確実に反映されるように待機
+            await Task.Delay(1, token);
+        }
+
+        return urls;
+    }
+
+    // 画像のダウンロード
+    private async Task DownloadImages(ListBox statusListBox, CancellationToken token)
+    {
+        try
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                statusListBox.Items.Insert(statusListBox.ItemCount, $"スレッドから画像のURLを抽出しています。");
+                statusListBox.ScrollIntoView(statusListBox.ItemCount - 1);
+                statusListBox.InvalidateVisual();
+            });
+
+            foreach (var url in _urls)
+            {
+                var response = await HttpClient.GetAsync(url, token);
+                response.EnsureSuccessStatusCode();
+
+                var htmlWeb = new HtmlWeb();
+                
+                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+                var enc = Encoding.GetEncoding("Shift_JIS");
+                htmlWeb.OverrideEncoding = enc;
+                
+                htmlWeb.PreRequest += (request) =>
+                {
+                    request.Timeout = 5000;
+                    return true;
+                };
+                
+                var htmlDocument = htmlWeb.Load(url);
+                
+                await ProcessThreadImages(htmlDocument, url, statusListBox, token);
+            }
+        }
+        catch (HttpRequestException err)
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                statusListBox.Items.Insert(statusListBox.ItemCount, $"ダウンロード失敗 : {err.Message}");
+                statusListBox.ScrollIntoView(statusListBox.ItemCount - 1);
+                statusListBox.InvalidateVisual();
+            }, DispatcherPriority.Send, token);
+            
+            throw;
+        }
+    }
+
+    // スレッド内の画像ダウンロード
+    private async Task ProcessThreadImages(HtmlDocument htmlDocument, string url, ListBox statusListBox, CancellationToken token)
+    {
+        var imageUrls = new HashSet<string>();
+    
+        // URLに応じてXPATHを切り替え
+        var isMaguroSite = Regex.IsMatch(url, @"^https://maguro.2ch.sc/.*");
+        var xpath = isMaguroSite
+            ? "//dl[@class='thread']//dd"
+            : "//div[@class='post-content']";
+    
+        var nodes = htmlDocument.DocumentNode.SelectNodes(xpath);
+    
+        if (nodes != null)
+        {
+            foreach (var node in nodes)
+            {
+                // img要素のsrc属性から画像URLを抽出
+                var imgNodes = node.SelectNodes(".//img");
+                if (imgNodes != null)
+                {
+                    foreach (var img in imgNodes)
+                    {
+                        var src = img.GetAttributeValue("src", "");
+                        if (!string.IsNullOrEmpty(src) && 
+                            !src.Contains("ad-stir") && 
+                            !src.Contains("microad"))
+                        {
+                            imageUrls.Add(src);
+                        }
+                    }
+                }
+
+                // aタグのテキスト値から画像URLを抽出
+                var linkNodes = node.SelectNodes(".//a");
+                if (linkNodes == null) continue;
+                
+                foreach (var link in linkNodes)
+                {
+                    var linkText = link.InnerText.Trim();
+                    if (!string.IsNullOrEmpty(linkText) &&
+                        _imageExtensions.Any(ext => linkText.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        imageUrls.Add(linkText);
+                    }
+                }
+            }
+        }
+
+        if (imageUrls.Count > 0)
+        {
+            var imageLists = FilterAndTransformImageUrls(imageUrls.ToList());
+            await DownloadImagesFromUrls(imageLists, statusListBox, token);
+        }
+    }
+
+    // URLのフィルタリングと変換
+    private static List<string> FilterAndTransformImageUrls(List<string> urls)
+    {
+        urls = urls.Where(x => Regex.IsMatch(x, @"(.*.png|.*.jpg|.*.jpeg|.*.gif)")).ToList();
+
+        var transformations = new Dictionary<string, string>
+        {
+            {@"sssp://o.8ch.net/", @"https://o.5ch.net/"},
+            {@"//o.8ch.net/", @"https://o.5ch.net/"},
+            {@"//o.5ch.net/", @"https://o.5ch.net/"},
+            {@"o.8ch.net/", @"o.5ch.net/"},
+            {@"http://o.5ch.net/", @"https://o.5ch.net/"}
+        };
+
+        foreach (var transformation in transformations)
+        {
+            urls = urls.Select(x =>
+                Regex.IsMatch(x, $@"({transformation.Key}.*.png|{transformation.Key}.*.jpg|{transformation.Key}.*.jpeg|{transformation.Key}.*.gif)") ?
+                    x.Replace(transformation.Key, transformation.Value) : x)
+                .ToList();
+        }
+
+        return urls;
+    }
+
+    // URLリストから画像をダウンロード
+    private async Task DownloadImagesFromUrls(List<string> imageUrls, ListBox statusListBox, CancellationToken token)
+    {
+        foreach (var imageUrl in imageUrls)
+        {
+            // 画像URLが空の場合およびBe番号のアイコンは除外
+            if (string.IsNullOrEmpty(imageUrl) || imageUrl.Contains("//img.5ch.net/ico/"))
+                continue;
+
+            if (IsValidUrl(imageUrl))
+            {
+                var fileName = new string(imageUrl.Reverse().TakeWhile(c => c != '/').Reverse().ToArray());
+                if (!string.IsNullOrEmpty(fileName))
+                {
+                    var decImageUrl = System.Net.WebUtility.UrlDecode(imageUrl);
+                    fileName              = System.Net.WebUtility.UrlDecode(fileName);
+                    var localFilePath     = Path.Combine(DirPath ?? throw new InvalidOperationException(), fileName);
+
+                    // ファイルの存在確認 (既にダウンロード済みの画像ファイルは無視する)
+                    string? statusMsg;
+                    if (File.Exists(localFilePath))
+                    {
+                        statusMsg = $"ダウンロード済みのため無視 : {decImageUrl}";
+                        
+                        // リストボックスの更新
+                        await Dispatcher.UIThread.InvokeAsync(() =>
+                        {
+                            statusListBox.Items.Insert(statusListBox.ItemCount, statusMsg);
+                            statusListBox.ScrollIntoView(statusListBox.ItemCount - 1);
+                            statusListBox.InvalidateVisual();
+                        }, DispatcherPriority.Send, token);
+                        continue;
+                    }
+
+                    // 画像のダウンロード
+                    var (bResult, errMsg) = await DownloadImageAsync(decImageUrl, localFilePath);
+                    
+                    // ダウンロード結果の取得
+                    statusMsg = bResult ? $"ダウンロード完了 : {decImageUrl}" : $"ダウンロード失敗 : {decImageUrl}\t{errMsg}";
+                    
+                    // リストボックスの更新
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        statusListBox.Items.Insert(statusListBox.ItemCount, statusMsg);
+                        statusListBox.ScrollIntoView(statusListBox.ItemCount - 1);
+                        statusListBox.InvalidateVisual();
+                    }, DispatcherPriority.Send, token);
+                }
+            }
+            
+            token.ThrowIfCancellationRequested();
+        }
+    }
+
+    // メインの処理メソッド
+    public async void btnStart_Click(object sender, RoutedEventArgs e)
+    {
+        // 各プロパティを初期化
+        _urls.Clear();
+        DirPath = string.Empty;
+        _cts = new CancellationTokenSource();
+
+        var statusListBox = this.FindControl<ListBox>("StatusListBox");
+        if (statusListBox == null) return;
+        statusListBox.Items.Clear();
+
+        var scrollViewer = statusListBox.FindDescendantOfType<ScrollViewer>();
+        if (scrollViewer == null) return;
+        scrollViewer.Offset = new Vector(0, 0);
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            statusListBox.InvalidateVisual();
+            scrollViewer.InvalidateVisual();
+        }, DispatcherPriority.Send);
+
+        // 入力値の検証
+        if (!await ValidateInputs())
+        {
             return;
         }
-        
-        // 実行時に不要なUIを無効化
-        //// Be番号の入力テキストUIの無効化
-        inputBe.IsEnabled = false;
-        
-        //// プルダウンの無効化
-        var serverCombo = this.FindControl<ComboBox>("ServerCombo");
-        if (serverCombo == null) return;
-        serverCombo.IsEnabled = false;
-        
-        //// [スキップ]ボタンの無効化
-        var btnSkip = this.FindControl<Button>("BtnSkip");
-        if (btnSkip == null) return;
-        btnSkip.IsEnabled = false;
-        
-        //// 無視するサーバテキストUIの無効化
-        var skipBox = this.FindControl<TextBox>("SkipBox");
-        if (skipBox == null) return;
-        skipBox.IsEnabled = false;
-        
-        //// チェックボックスUIを無効化
-        var replaceCheck = this.FindControl<CheckBox>("ReplaceCheck");
-        if (replaceCheck == null) return;
-        replaceCheck.IsEnabled = false;
-        
-        //// [保存先]ボタンの無効化
-        var btnDirectory = this.FindControl<Button>("BtnDirectory");
-        if (btnDirectory == null) return;
-        btnDirectory.IsEnabled = false;
-        
-        //// 保存先テキストUIの無効化
-        directoryText.IsEnabled = false;
-        
-        // [開始]ボタンの無効化
-        var button = this.FindControl<Button>("BtnStart");
-        if (button is null) return;
-        button.Content = @"実行中...";
-        button.IsEnabled = false;
-        
-        // [停止]ボタンの有効化
-        var stopBtn = this.FindControl<Button>("BtnStop");
-        if (stopBtn == null)    return;
-        stopBtn.IsEnabled = true;
+
+        // UIの無効化
+        DisableUi();
 
         // CancellationTokenSourceの生成
         using (_cts = new CancellationTokenSource())
         {
-            // キャンセルトークンの取得
             var token = _cts.Token;
-            
-            // タスクをキャンセルした場合のアクションを登録
-            token.Register(() =>
+            token.Register(() => { });
+
+            var inputBe      = this.FindControl<TextBox>("InputBeText");
+            var be     = inputBe?.Text ?? string.Empty;
+            var skipBox      = this.FindControl<TextBox>("SkipBox");
+            var replaceCheck = this.FindControl<CheckBox>("ReplaceCheck");
+
+            try
             {
-            });
-
-            // スレッドのURL群を取得
-            var urlHandler = new HttpClientHandler() {AllowAutoRedirect = false,};  // 自動リダイレクトしない
-            using (var client = new HttpClient(urlHandler))
-            {
-                client.Timeout = TimeSpan.FromMilliseconds(15000);
+                // スレッドURLの取得
+                if (skipBox != null && replaceCheck != null)
+                    _urls = await FetchThreadUrls(be, skipBox, replaceCheck, statusListBox, token);
                 
-                try
+                if (_urls.Count == 0)
                 {
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        statusListBox.Items.Insert(statusListBox.ItemCount, $"スレッドのURLを取得しています。");
-                        statusListBox.InvalidateVisual();
-                    }, DispatcherPriority.Send);
-                    
-                    // 該当するBe番号のスレッド一覧のURLを指定
-                    var url = "https://ame.hacca.jp/sasss/log-be2.cgi?i=" + beid;
-
-                    // HTTPリクエストを送信してレスポンスを取得
-                    var response = await client.GetAsync(url, token);
-
-                    // 取得に失敗した場合、GetStringAsyncメソッドのときと同じ例外を投げる
-                    response.EnsureSuccessStatusCode();
-
-                    // WebサイトからHTMLを取得
-                    var htmlWeb = new HtmlWeb();
-                    
-                    // PreRequestイベントを購読してタイムアウトを設定
-                    htmlWeb.PreRequest += (request) =>
-                    {
-                        // タイムアウトを[mS]で設定 (15[秒])
-                        request.Timeout = 15000;
-                        return true;
-                    };
-                    
-                    var htmlDocument = htmlWeb.Load(url);
-
-                    // XPathを使用して<a>タグのhref要素のスレッドURLを取得
-                    var xpathExpression = "//body//a/@href";
-                    var urlInnerText = htmlDocument.DocumentNode.SelectNodes(xpathExpression)?
-                        .Select(node => node.GetDirectInnerText())
-                        .ToList();
-                    if (urlInnerText == null)
-                    {
-                        await MessageBoxManager.GetMessageBoxStandard("終了",
-                            $"スレッドのURLは取得できませんでした。{Environment.NewLine}BE番号が間違っているかもしれません。",
-                            ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Warning).ShowAsync();
-                        UiEnable();
-                        
-                        return;
-                    }
-                    
-                    var result = urlInnerText.Where(x => x != string.Empty).ToList().Skip(2).ToList();
-                    result     = result.Select(x => x).Where(x => Regex.IsMatch(x, @"^http.*")).ToList();
-
-                    // キャンセルが要求されていたら、OperationCanceledException例外を発生させる
-                    token.ThrowIfCancellationRequested();
-                    
-                    // leiaサーバをmaguroサーバ置換する場合
-                    if (replaceCheck.IsChecked != false)
-                    {   // URLが"http://leia.2ch.net/" または "http://leia.5ch.net/" の場合は "https://maguro.2ch.sc/"へ置換する
-                        result = result.Select(item => item.Contains(@"http://leia.2ch.net/") || item.Contains(@"http://leia.5ch.net/") ?
-                                item.Replace(@"http://leia.2ch.net/", @"https://maguro.2ch.sc/")
-                                    .Replace(@"http://leia.5ch.net/", @"https://maguro.2ch.sc/") : item)
-                            .ToList();
-                    }
-                    
-                    // キャンセルが要求されていたら、OperationCanceledException例外を発生させる
-                    token.ThrowIfCancellationRequested();
-                    
-                    // 特定のサーバにあるスレッドURLを読み飛ばす
-                    if (!string.IsNullOrEmpty(skipBox.Text))
-                    {
-                        var skipUrls = skipBox.Text?.Split(Environment.NewLine).ToList() ?? new List<string>();
-                        foreach (var skipUrl in skipUrls)
-                        {   // プルダウン等で指定した特定のURLを含む全ての要素を削除
-                            var pattern = @"^" + skipUrl;
-                            result.RemoveAll(s => Regex.IsMatch(s, pattern));
-                        }
-                        
-                        _urls.AddRange(result);
-                    }
-                    else
-                    {
-                        _urls.AddRange(result);
-                    }
-                    
-                    // キャンセルが要求されていたら、OperationCanceledException例外を発生させる
-                    token.ThrowIfCancellationRequested();
-                    
-                    // スレッドが見つからない場合は処理を終了
-                    if (_urls.Count == 0)
-                    {
-                        await MessageBoxManager.GetMessageBoxStandard("終了", $"スレッドが見つかりません。" +
-                                                                            $"{Environment.NewLine}" +
-                                                                            $"スキップ設定等の確認をお願いします。",
-                            ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Stop).ShowAsync();
-                        UiEnable();
-                
-                        return;
-                    }
-            
-                    // URLの並びにおいて、最も過去のスレッドURLを先頭にする (時系列順)
-                    _urls.Reverse();
-                    
-                    // これから読み込むスレッドのURLを表示
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        statusListBox.Items.Insert(statusListBox.ItemCount, $"以下に示すスレッドのURLから画像をダウンロードします。");
-                        statusListBox.InvalidateVisual();
-                    }, DispatcherPriority.Send);
-                    
-                    foreach (var threadUrl in _urls)
-                    {
-                        await Dispatcher.UIThread.InvokeAsync(() =>
-                        {
-                            statusListBox.Items.Insert(statusListBox.ItemCount, $"{threadUrl}");
-                            statusListBox.ScrollIntoView(statusListBox.ItemCount - 1);
-                            //statusListBox.ScrollIntoView(statusListBox.Items[statusListBox.Items.Count - 1]);
-                            
-                            statusListBox.InvalidateVisual();
-                        }, DispatcherPriority.Send);
-                    }
-                }
-                catch (HttpRequestException err)
-                {
-                    await MessageBoxManager.GetMessageBoxStandard("エラー", $"エラーが発生しました。\n\n{err.Message}",
-                        ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Error).ShowAsync();
                     UiEnable();
-                    
                     return;
                 }
-                catch (OperationCanceledException)
-                {
-                    await MessageBoxManager.GetMessageBoxStandard("キャンセル", $"処理がキャンセルされました。",
-                        ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Stop).ShowAsync();
-                    UiEnable();
 
-                    return;
-                }
+                // 画像のダウンロード処理
+                await DownloadImages(statusListBox, token);
             }
-            
-            // 画像ファイルの確認およびダウンロード
-            var imgHandler = new HttpClientHandler() {AllowAutoRedirect = false,};  // 自動リダイレクトしない
-            using (var client = new HttpClient(imgHandler))
+            catch (HttpRequestException err)
             {
-                // 画像のダウンロードは時間が掛かるため、タイムアウトを設定しない
-                //client.Timeout = TimeSpan.FromMilliseconds(60000);
-                
-                try
-                {
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        statusListBox.Items.Insert(statusListBox.ItemCount, $"スレッドから画像のURLを抽出しています。");
-                        statusListBox.ScrollIntoView(statusListBox.ItemCount - 1);
-                        //statusListBox.ScrollIntoView(statusListBox.Items[statusListBox.Items.Count - 1]);
-                        statusListBox.InvalidateVisual();
-                    });
-                    
-                    foreach (var url in _urls)
-                    {
-                        // 該当スレッドのURLへHTTPリクエストを送信し、レスポンスを取得
-                        var response = await client.GetAsync(url, token);
-
-                        // 取得に失敗した場合、GetStringAsyncメソッドのときと同じ例外を投げる
-                        response.EnsureSuccessStatusCode();
-
-                        // WebサイトからHTMLを取得
-                        var htmlWeb = new HtmlWeb();
-                        
-                        // 文字コード : Shift-JIS
-                        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);  // need .NET 5 later
-                        var enc = Encoding.GetEncoding("Shift_JIS");
-                        htmlWeb.OverrideEncoding = enc;
-                        
-                        // PreRequestイベントを購読してタイムアウトを設定
-                        htmlWeb.PreRequest += (request) =>
-                        {
-                            // タイムアウトを[mS]で設定 (5000[mS])
-                            request.Timeout = 5000;
-                            return true;
-                        };
-                        
-                        var htmlDocument = htmlWeb.Load(url);
-                        
-                        // 画像のURLを取得
-                        var imageUrls = new List<string>();
-                        
-                        // imgタグのsrc要素およびaタグの画像を全て検出
-                        var xpath = new Func<string, string>(x =>
-                            !Regex.IsMatch(x, @"^https://maguro.2ch.sc/.*")
-                                ? "//body//div[@id='maincontent']//div//div[@id='thread']//article//section[@class='post-content']" // gretaサーバ
-                                : "//body//dl[@class='thread']//dd")(url); 
-                        var objNewsDataNodeCollection = htmlDocument.DocumentNode.SelectNodes(xpath);
-
-                        foreach (var objNewsDataNode in objNewsDataNodeCollection)
-                        {
-                            // レスのimgタグを全て取得
-                            var imgTags = objNewsDataNode.SelectNodes("img")?
-                                .Select(node => node)
-                                .ToList() ?? new ();
-                            
-                            // レスのimgタグのsrc要素を全て取得
-                            //var srcElements = new List<string>();
-                            //foreach (var imgTag in imgTags)
-                            //{
-                            //    srcElements.Add(imgTag.GetAttributeValue("src", ""));
-                            //}
-                            var srcElements = imgTags.Select(tag => tag.GetAttributeValue("src", "")).ToList();
-                            
-                            // src要素からPNG形式, JPG(JPEG)形式, GIF形式のみを抽出
-                            srcElements = srcElements.Select(x => x).Where(x => Regex.IsMatch(x, @"(.*.png|.*.jpg|.*.jpeg|.*.gif)")).ToList();
-                            
-                            // src要素から以下に示すURLを変換
-                            // "sssp://o.8ch.net/"  -->  "https://o.8ch.net/"
-                            // "//o.8ch.net/"  -->  "https://o.8ch.net/"
-                            // "//o.5ch.net/"  -->  "https://o.5ch.net/"
-                            // "o.8ch.net/"  -->  "o.5ch.net/"
-                            srcElements = srcElements.Select(x => 
-                                        Regex.IsMatch(x, @"(sssp://o.8ch.net/.*.png|sssp://o.8ch.net/.*.jpg|sssp://o.8ch.net/.*.jpeg|sssp://o.8ch.net/.*.gif)") ?
-                                        x.Replace(@"sssp://o.8ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            srcElements = srcElements.Select(x => 
-                                    Regex.IsMatch(x, @"(^//o.8ch.net/.*.png|^//o.8ch.net/.*.jpg|^//o.8ch.net/.*.jpeg|^//o.8ch.net/.*.gif)") ?
-                                        x.Replace(@"//o.8ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            srcElements = srcElements.Select(x => 
-                                    Regex.IsMatch(x, @"(^//o.5ch.net/.*.png|^//o.5ch.net/.*.jpg|^//o.5ch.net/.*.jpeg|^//o.5ch.net/.*.gif)") ?
-                                        x.Replace(@"//o.5ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            srcElements = srcElements.Select(x => 
-                                    Regex.IsMatch(x, @"(o.8ch.net/.*.png|o.8ch.net/.*.jpg|o.8ch.net/.*.jpeg|o.8ch.net/.*.gif)") ?
-                                        x.Replace(@"o.8ch.net/", @"o.5ch.net/") : x)
-                                .ToList();
-                            
-                            srcElements = srcElements.Select(x => 
-                                    Regex.IsMatch(x, @"(http://o.5ch.net/.*.png|http://o.5ch.net/.*.jpg|http://o.5ch.net/.*.jpeg|http://o.5ch.net/.*.gif)") ?
-                                        x.Replace(@"http://o.5ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            imageUrls.AddRange(srcElements);
-                            
-                            // レスのaタグを全て取得
-                            var aTags = objNewsDataNode.SelectNodes("a")?
-                                .Select(node => node)
-                                .ToList() ?? new ();
-                            
-                            // レスのaタグの値を全て取得
-                            var hrefElements = aTags.Select(tag => tag.InnerText).ToList();
-                            
-                            // href要素からPNG形式, JPG(JPEG)形式, GIF形式のみを抽出
-                            hrefElements = hrefElements.Select(x => x).Where(x => Regex.IsMatch(x, @"(.*.png|.*.jpg|.*.jpeg|.*.gif)")).ToList();
-                            
-                            // href要素から以下に示すURLを変換
-                            // "sssp://o.8ch.net/"  -->  "https://o.8ch.net/"
-                            // "//o.8ch.net/"  -->  "https://o.8ch.net/"
-                            // "//o.5ch.net/"  -->  "https://o.5ch.net/"
-                            // "o.8ch.net/"  -->  "o.5ch.net/"
-                            hrefElements = hrefElements.Select(x => 
-                                        Regex.IsMatch(x, @"(sssp://o.8ch.net/.*.png|sssp://o.8ch.net/.*.jpg|sssp://o.8ch.net/.*.jpeg|sssp://o.8ch.net/.*.gif)") ?
-                                        x.Replace(@"sssp://o.8ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            hrefElements = hrefElements.Select(x => 
-                                    Regex.IsMatch(x, @"(^//o.8ch.net/.*.png|^//o.8ch.net/.*.jpg|^//o.8ch.net/.*.jpeg|^//o.8ch.net/.*.gif)") ?
-                                        x.Replace(@"//o.8ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            hrefElements = hrefElements.Select(x => 
-                                    Regex.IsMatch(x, @"(^//o.5ch.net/.*.png|^//o.5ch.net/.*.jpg|^//o.5ch.net/.*.jpeg|^//o.5ch.net/.*.gif)") ?
-                                        x.Replace(@"//o.5ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            hrefElements = hrefElements.Select(x => 
-                                    Regex.IsMatch(x, @"(o.8ch.net/.*.png|o.8ch.net/.*.jpg|o.8ch.net/.*.jpeg|o.8ch.net/.*.gif)") ?
-                                        x.Replace(@"o.8ch.net/", @"o.5ch.net/") : x)
-                                .ToList();
-                            
-                            hrefElements = hrefElements.Select(x => 
-                                    Regex.IsMatch(x, @"(http://o.5ch.net/.*.png|http://o.5ch.net/.*.jpg|http://o.5ch.net/.*.jpeg|http://o.5ch.net/.*.gif)") ?
-                                        x.Replace(@"http://o.5ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            imageUrls.AddRange(hrefElements);
-                        }
-                        
-                        // XPathを使用してスレッドに書き込まれている全てのレス内容を取得
-                        /*var xpathExpression = new Func<string, string>(x =>
-                            !Regex.IsMatch(x, @"^https://maguro.2ch.sc/.*")
-                                ? "//article//section[@class='post-content']//a[contains(., '.jpg') or contains(., '.png') or contains(., '.gif')]/@href"
-                                : "//body//dl[@class='thread']/dd/a[contains(., '.jpg') or contains(., '.png') or contains(., '.gif')]/@href")(url);*/
-                        var xpathExpression = new Func<string, string>(x =>
-                            !Regex.IsMatch(x, @"^https://maguro.2ch.sc/.*")
-                                ? "//body//div[@id='maincontent']//div//div[@id='thread']//article//section[@class='post-content']//text()" // gretaサーバ
-                                : "//body//dl[@class='thread']//dd//text()")(url);                                                          // maguroサーバ
-                        
-                        var allResponses = htmlDocument.DocumentNode.SelectNodes(xpathExpression)?
-                            .Select(node => node.GetDirectInnerText())
-                            .ToList() ?? new List<string>();
-                        
-                        foreach (var res in allResponses)
-                        {
-                            var resList = res.Split(Environment.NewLine).ToList();
-                            var imgList = resList.Select(x => x).Where(x => Regex.IsMatch(x, @"(.*.png|.*.jpg|.*.jpeg|.*.gif)")).ToList();
-                            
-                            // "sssp://o.8ch.net/"  -->  "https://o.8ch.net/"
-                            // "//o.8ch.net/"  -->  "https://o.8ch.net/"
-                            // "//o.5ch.net/"  -->  "https://o.5ch.net/"
-                            // "o.8ch.net/"  -->  "o.5ch.net/"
-                            imgList = imgList.Select(x =>
-                                Regex.IsMatch(x, @"(sssp://o.8ch.net/.*.png|sssp://o.8ch.net/.*.jpg|sssp://o.8ch.net/.*.gif)") ?
-                                    x.Replace(@"sssp://o.8ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            imgList = imgList.Select(x => 
-                                    Regex.IsMatch(x, @"(^//o.8ch.net/.*.png|^//o.8ch.net/.*.jpg|^//o.8ch.net/.*.jpeg|^//o.8ch.net/.*.gif)") ?
-                                        x.Replace(@"//o.8ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            imgList = imgList.Select(x => 
-                                    Regex.IsMatch(x, @"(^//o.5ch.net/.*.png|^//o.5ch.net/.*.jpg|^//o.5ch.net/.*.jpeg|^//o.5ch.net/.*.gif)") ?
-                                        x.Replace(@"//o.5ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            imgList = imgList.Select(x => 
-                                    Regex.IsMatch(x, @"(o.8ch.net/.*.png|o.8ch.net/.*.jpg|o.8ch.net/.*.jpeg|o.8ch.net/.*.gif)") ?
-                                        x.Replace(@"o.8ch.net/", @"o.5ch.net/") : x)
-                                .ToList();
-                            
-                            imgList = imgList.Select(x => 
-                                    Regex.IsMatch(x, @"(http://o.5ch.net/.*.png|http://o.5ch.net/.*.jpg|http://o.5ch.net/.*.jpeg|http://o.5ch.net/.*.gif)") ?
-                                        x.Replace(@"http://o.5ch.net/", @"https://o.5ch.net/") : x)
-                                .ToList();
-                            
-                            imageUrls.AddRange(imgList);
-                        }
-                        
-                        // 重複している画像のURLを削除
-                        imageUrls = imageUrls.Distinct().ToList();
-
-                        // 取得したURLから画像を保存
-                        if (imageUrls.Count != 0)
-                        {
-                            foreach (var imageUrl in imageUrls)
-                            {
-                                // Beアイコンの画像を無視する
-                                if (string.IsNullOrEmpty(imageUrl)) continue;
-                                if (imageUrl.Contains("//img.5ch.net/ico/")) continue;
-
-                                // 画像のURLの生存を確認
-                                if (IsValidUrl(imageUrl))
-                                {
-                                    // 画像ファイル名
-                                    var fileName =
-                                        new string(imageUrl.Reverse().TakeWhile(c => c != '/').Reverse().ToArray());
-                                    if (!string.IsNullOrEmpty(fileName))
-                                    {
-                                        var decImageUrl = System.Net.WebUtility.UrlDecode(imageUrl);
-                                        fileName = System.Net.WebUtility.UrlDecode(fileName);
-                                        var (bResult, errMsg) = await DownloadImageAsync(decImageUrl, Path.Combine(this.DirPath, fileName));
-                                        
-                                        // ダウンロードした画像ファイルのURLを表示
-                                        var statusMsg = bResult ? $"ダウンロード完了 : {decImageUrl}" : $"ダウンロード失敗 : {decImageUrl}\t{errMsg}";
-                                        
-                                        await Dispatcher.UIThread.InvokeAsync(() =>
-                                        {
-                                            statusListBox.Items.Insert(statusListBox.ItemCount, statusMsg);
-                                            statusListBox.ScrollIntoView(statusListBox.ItemCount - 1);
-                                            //statusListBox.ScrollIntoView(statusListBox.Items[statusListBox.Items.Count - 1]);
-                                            statusListBox.InvalidateVisual();
-                                        }, DispatcherPriority.Send);
-                                    }
-                                }
-                                
-                                // キャンセルが要求されていたら、OperationCanceledException例外を発生させる
-                                token.ThrowIfCancellationRequested();
-                            }
-                        }
-                    }
-
-                    // Character Encoding : Shift-JIS
-                    // Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);  // need .NET 5 later
-                    // var enc = Encoding.GetEncoding("Shift_JIS");
-
-                    // 文字コードを指定してストリームから読み込む
-                    // String hoge = "";
-                    // using (var stream = (await response.Content.ReadAsStreamAsync()))
-                    // using (var reader = (new StreamReader(stream, enc, true)) as TextReader)
-                    // {
-                    //     hoge = await reader.ReadToEndAsync();
-                    // }
-                    //
-                    // // .jpg、.png、.gif拡張子がある画像のURLを抽出
-                    // var imageUrls = htmlDocument.DocumentNode
-                    //     .Descendants()
-                    //     .Where(node =>
-                    //     {
-                    //         var src = node.Attributes["src"]?.Value;
-                    //         var style = node.Attributes["style"]?.Value;
-                    //         return src != null && (src.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
-                    //                                src.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
-                    //                                src.EndsWith(".gif", StringComparison.OrdinalIgnoreCase) ||
-                    //                                (style != null && (style.Contains(".jpg") || style.Contains(".png") || style.Contains(".gif"))));
-                    //     })
-                    //     .Select(node =>
-                    //     {
-                    //         var src = node.Attributes["src"]?.Value;
-                    //         if (src != null)　return src;
-                    //
-                    //         var style = node.Attributes["style"]?.Value;
-                    //         // ここでstyle属性からURLを抽出する処理を追加する
-                    //
-                    //         return null;
-                    //     })
-                    //     .Where(url => url != null);
-                    //
-                    // foreach (var imageUrl in imageUrls)
-                    // {
-                    // }
-                }
-                catch (HttpRequestException err)
-                {
-                    // ダウンロードに失敗した画像ファイルのURLを表示
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        statusListBox.Items.Insert(statusListBox.ItemCount, $"ダウンロード失敗 : {err.Message}");
-                        statusListBox.ScrollIntoView(statusListBox.ItemCount - 1);
-                        statusListBox.InvalidateVisual();
-                    }, DispatcherPriority.Send);
-                }
-                catch (OperationCanceledException)
-                {
-                    await MessageBoxManager.GetMessageBoxStandard("キャンセル", $"処理がキャンセルされました。",
-                        ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Stop).ShowAsync();
-                    UiEnable();
-                }
+                await MessageBoxManager.GetMessageBoxStandard("エラー", $"エラーが発生しました。\n\n{err.Message}",
+                    ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Error).ShowAsync();
+            }
+            catch (OperationCanceledException)
+            {
+                await MessageBoxManager.GetMessageBoxStandard("キャンセル", $"処理がキャンセルされました。",
+                    ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Stop).ShowAsync();
+            }
+            finally
+            {
+                UiEnable();
             }
         }
-
-        UiEnable();
     }
     
     public void btnStop_Click(object sender, RoutedEventArgs e)
@@ -669,59 +652,82 @@ public partial class MainWindow : Window
     }
     
     // 画像の保存
+    [GeneratedRegex(@"(i.imgur.com/|imgur.com/a/)")]
+    private static partial Regex ImgurRegex();
+
     private static async Task<(bool, string)> DownloadImageAsync(string url, string destinationPath)
     {
-        var urlHandler = Regex.IsMatch(url, @"(i.imgur.com/|imgur.com/a/)")
-            ? new HttpClientHandler() {AllowAutoRedirect = true,}   // 自動リダイレクトする
-            : new HttpClientHandler() {AllowAutoRedirect = false,}; // 自動リダイレクトしない
-        
-        using (var client = new HttpClient(urlHandler))
+        // imgurの場合は別途HttpClientを作成
+        if (ImgurRegex().IsMatch(url))
         {
-            try
-            {
-                // HTTP GETリクエストを送信
-                var response = await client.GetAsync(url);
-                
-                // imgurにある画像ファイルの場合はリダイレクト
-                if (urlHandler.AllowAutoRedirect)
-                {
-                    // リダイレクト先の最終的な画像のURLを取得
-                    var finalUrl = response.RequestMessage?.RequestUri?.ToString();
-                    if (string.IsNullOrEmpty(finalUrl)) return (false, $"リダイレクト先の画像ファイルのURLが不明です。");
-                    
-                    // リダイレクト先の画像ファイル名を取得
-                    var fileName = new string(finalUrl.Reverse().TakeWhile(c => c != '/').Reverse().ToArray());
-
-                    // 画像ファイルの削除の可否
-                    var bRemoved = Regex.IsMatch(fileName, @"(removed.png|removed.jpg|removed.jpeg|removed.gif)");
-                    
-                    // 削除されている場合はエラー
-                    if (bRemoved) return (false, $"画像ファイルは削除されています。");
-                }
-
-                // リクエストを確認
-                response.EnsureSuccessStatusCode();
-
-                // 画像ファイルを読み込む
-                var content = await response.Content.ReadAsByteArrayAsync();
-
-                // 画像ファイルを指定したディレクトリに書き込む
-                await File.WriteAllBytesAsync(destinationPath, content);
-            }
-            catch (HttpRequestException err)
-            {
-                return (false, err.Message);
-            }
+            using var imgurHandler = new HttpClientHandler();
+            imgurHandler.AllowAutoRedirect = true;
+            using var imgurClient  = new HttpClient(imgurHandler);
+            
+            // imgur向けの処理
+            return await ProcessImgurDownload(imgurClient, url, destinationPath);
         }
 
+        // 通常の画像ダウンロード
+        try
+        {
+            var response = await ImageHttpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+        
+            var content = await response.Content.ReadAsByteArrayAsync();
+            await File.WriteAllBytesAsync(destinationPath, content);
+        }
+        catch (HttpRequestException err)
+        {
+            return (false, err.Message);
+        }
+        
         return (true, string.Empty);
+    }
+    
+    private static async Task<(bool, string)> ProcessImgurDownload(HttpClient client, string url, string destinationPath)
+    {
+        try
+        {
+            // HTTP GETリクエストを送信
+            var response = await client.GetAsync(url);
+        
+            // リダイレクト先の最終的な画像のURLを取得
+            var finalUrl = response.RequestMessage?.RequestUri?.ToString();
+            if (string.IsNullOrEmpty(finalUrl))
+                return (false, $"リダイレクト先の画像ファイルのURLが不明です。");
+        
+            // リダイレクト先の画像ファイル名を取得
+            var fileName = new string(finalUrl.Reverse().TakeWhile(c => c != '/').Reverse().ToArray());
+
+            // 画像ファイルの削除の可否
+            var bRemoved = Regex.IsMatch(fileName, @"(removed.png|removed.jpg|removed.jpeg|removed.gif)");
+        
+            // 削除されている場合はエラー
+            if (bRemoved) 
+                return (false, $"画像ファイルは削除されています。");
+
+            // リクエストを確認
+            response.EnsureSuccessStatusCode();
+
+            // 画像ファイルを読み込む
+            var content = await response.Content.ReadAsByteArrayAsync();
+
+            // 画像ファイルを指定したディレクトリに書き込む
+            await File.WriteAllBytesAsync(destinationPath, content);
+        
+            return (true, string.Empty);
+        }
+        catch (HttpRequestException err)
+        {
+            return (false, err.Message);
+        }
     }
 
     private static bool IsValidUrl(string url)
     {
-        Uri? uriResult;
-        return Uri.TryCreate(url, UriKind.Absolute, out uriResult) &&
-                            (uriResult.Scheme == Uri.UriSchemeHttp || uriResult.Scheme == Uri.UriSchemeHttps);
+        return Uri.TryCreate(url, UriKind.Absolute, out var uriResult) &&
+               (uriResult.Scheme == Uri.UriSchemeHttp || uriResult.Scheme == Uri.UriSchemeHttps);
     }
     
 #pragma warning disable 0414
@@ -777,7 +783,7 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(e);
 
         var inputBeText = this.FindControl<TextBox>("InputBeText");
-        if (inputBeText == null)    return;
+        if (inputBeText == null) return;
             
         // 入力制限
         if (!string.IsNullOrEmpty(inputBeText.Text))
@@ -794,18 +800,17 @@ public partial class MainWindow : Window
         DirPath = dirText.Text;
     }
     
-    private void OpenAboutDialog_Click(object? sender, PointerPressedEventArgs e)
+    private void OpenAboutDialog_Click(object? sender, TappedEventArgs tappedEventArgs)
     {
         ArgumentNullException.ThrowIfNull(sender);
-        ArgumentNullException.ThrowIfNull(e);
+        ArgumentNullException.ThrowIfNull(tappedEventArgs);
         
         // アバウトダイアログを表示
         var aboutDialog = new AboutDialog();
         {
-            aboutDialog.Show();
+            aboutDialog.ShowDialog(this);
         }
     }
-#pragma warning disable 0414
     
     private void OpenBrowser_Click(object sender, PointerPressedEventArgs e)
     {
@@ -821,7 +826,7 @@ public partial class MainWindow : Window
     }
     
     // ListBoxのオプションを各OSにより分ける
-    // Isshue :
+    // Issue :
     // https://github.com/AvaloniaUI/Avalonia/issues/12744
     // https://github.com/AvaloniaUI/Avalonia/issues/13607
     // https://github.com/AvaloniaUI/Avalonia/pull/13765
@@ -893,27 +898,27 @@ public partial class MainWindow : Window
         if (serverCombo == null) return;
         serverCombo.IsEnabled = true;
         
-        //// [スキップ]ボタンの有効化
+        // [スキップ]ボタンの有効化
         var btnSkip = this.FindControl<Button>("BtnSkip");
         if (btnSkip == null) return;
         btnSkip.IsEnabled = true;
         
-        //// 無視するサーバテキストUIの有効化
+        // 無視するサーバテキストUIの有効化
         var skipBox = this.FindControl<TextBox>("SkipBox");
         if (skipBox == null) return;
         skipBox.IsEnabled = true;
         
-        //// チェックボックUIの有効化
+        // チェックボックUIの有効化
         var replaceCheck = this.FindControl<CheckBox>("ReplaceCheck");
         if (replaceCheck == null) return;
         replaceCheck.IsEnabled = true;
         
-        //// [保存先]ボタンの有効化
+        // [保存先]ボタンの有効化
         var btnDirectory = this.FindControl<Button>("BtnDirectory");
         if (btnDirectory == null) return;
         btnDirectory.IsEnabled = true;
         
-        //// 保存先テキストUIの有効化
+        // 保存先テキストUIの有効化
         var directoryText = this.FindControl<TextBox>("DirectoryText");
         if (directoryText == null) return;
         directoryText.IsEnabled = true;
@@ -935,7 +940,7 @@ public partial class MainWindow : Window
     {
         ArgumentNullException.ThrowIfNull(sender);
         ArgumentNullException.ThrowIfNull(e);
-        
+    
         var statusListBox = this.FindControl<ListBox>("StatusListBox");
 
         // ReSharper disable once UseNullPropagation
@@ -944,6 +949,86 @@ public partial class MainWindow : Window
         // 選択した行のテキストをクリップボードへコピー
         if (statusListBox.SelectedItem is not string selectedItem) return;
         if ( Clipboard is not null) await Clipboard.SetTextAsync(selectedItem);
+    }
+    
+    // [設定を保存]ボタン
+    private async void btnSaveSettings_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button btnSaveSettings)
+        {
+            try
+            {
+                // [設定を保存]ボタンを一時的に無効化
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    btnSaveSettings.IsEnabled = false;
+                });
+                
+                await UpdateSettingAsync();
+
+                var window = (Window)this.VisualRoot!;
+                await MessageBoxManager.GetMessageBoxStandard("保存完了", "各種設定を保存しました。",
+                    ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Success).ShowWindowDialogAsync(window);
+            }
+            catch (Exception)
+            {
+                var window = (Window)this.VisualRoot!;
+                await MessageBoxManager.GetMessageBoxStandard("保存の失敗", "各種設定の保存に失敗しました。",
+                    ButtonEnum.Ok, MsBox.Avalonia.Enums.Icon.Error).ShowWindowDialogAsync(window);
+            }
+            finally
+            {
+                // [設定を保存]ボタンを有効化
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    btnSaveSettings.IsEnabled = true;
+                });
+            }
+        }
+    }
+    
+    // 設定ファイルの更新
+    private async Task UpdateSettingAsync()
+    {
+        await ConfigManager.Instance.UpdateConfigAsync(config =>
+        {
+            // Be番号
+            var inputBeText = this.FindControl<TextBox>("InputBeText");
+            if (inputBeText != null)
+            {
+                config.Be = inputBeText.Text;
+            }
+            
+            // スキップするURL
+            var skipBox = this.FindControl<TextBox>("SkipBox");
+            config.Skip = skipBox?.Text?
+                .Split(["\r\n", "\r", "\n"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList() ?? [];
+            
+            // Maguroチェックボックス
+            var replaceCheck = this.FindControl<CheckBox>("ReplaceCheck");
+            if (replaceCheck != null)
+            {
+                config.Maguro = (bool) replaceCheck.IsChecked!;
+            }
+            
+            // 保存先ディレクトリ
+            var directoryText = this.FindControl<TextBox>("DirectoryText");
+            if (directoryText != null)
+            {
+                config.Dir = directoryText.Text;
+            }
+            
+            // 現在の最大化状態を保存
+            config.Maximize = WindowState == WindowState.Maximized;
+            
+            // 現在のウインドウサイズを保存 (最大化されている場合は保存しない)
+            if (WindowState != WindowState.Normal) return;
+            config.WindowSize.Clear();
+            config.WindowSize.Add(Width);
+            config.WindowSize.Add(Height);
+        });
     }
 }
 

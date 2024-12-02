@@ -19,7 +19,7 @@ SLE、Debian GNU/Linux、Manjaro ARM、Windowsにて動作確認をしており�
 # 1. ビルドに必要なライブラリをインストール  
 <br>
 
-* .NET 6以降のランタイムまたはSDK  
+* .NET 8以降のランタイムまたはSDK  
   https://dotnet.microsoft.com/ja-jp/download/dotnet  
 <br>
 <br>
@@ -56,3 +56,35 @@ SLE、Debian GNU/Linux、Manjaro ARM、Windowsにて動作確認をしており�
     dotnet publish -c:Release -r:win-x64 -p:PublishReadyToRun=false -p:PublishSingleFile=true --self-contained:false  
 <br>
 <br>
+
+# 3. 設定ファイル  
+
+本ソフトウェアの設定ファイルは、実行バイナリと同階層のディレクトリにGetBeImage.jsonファイルとして保存されます。  
+メイン画面の[設定を保存]ボタンを押下することにより、現在の設定を保存することが可能です。  
+
+* Be  
+  デフォルト値 : 空欄  
+  検索するBe番号が保存されます。  
+  <br>
+* Dir  
+  デフォルト値 : 空欄  
+  ダウンロードした画像を保存するディレクトリのパスが保存されます。  
+  <br>
+* Maguro  
+  デフォルト値 : <code>true</code>  
+  スレッドのURLにおいて、leiaサーバ (leia.2ch, leia.5ch) をmaguro.2ch.scドメインに置き換えます。  
+  <br>
+  leiaサーバはダウンしていることが多いため、この設定は<code>true</code>となっています。  
+  <br>
+* Skip  
+  デフォルト値 : 空欄  
+  検索をスキップするスレッドURLのドメインが保存されます。  
+  <br>
+* Maximize  
+  デフォルト値 : <code>false</code>  
+  ウインドウが最大化されているかどうかが保存されます。  
+  <br>
+* WindowSize  
+  デフォルト値 : <code>["1024", "768"]</code>  
+  ウインドウのサイズが保存されます。  
+  <br>

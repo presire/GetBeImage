@@ -6,15 +6,19 @@
         <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
         <ApplicationManifest>app.manifest</ApplicationManifest>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-        <Version>0.0.5</Version>
+        <Version>0.1.0</Version>
         <Authors>Presire</Authors>
         <PackageIcon>logo.png</PackageIcon>
         <Company />
-        <AssemblyVersion>0.0.5</AssemblyVersion>
+        <AssemblyVersion>0.1.0</AssemblyVersion>
         <Title>GetBeImage</Title>
         <Description>thretaiplus.js用スレッド情報配信鯖から任意のBe番号が立てたスレッドに貼れれている画像をダウンロードするツール</Description>
-        <FileVersion>0.0.5</FileVersion>
+        <FileVersion>0.1.0</FileVersion>
         <LangVersion>12</LangVersion>
+        <Copyright>Presire</Copyright>
+        <PackageProjectUrl>https://github.com/presire/GetBeImage</PackageProjectUrl>
+        <PackageLicenseUrl>https://github.com/presire/GetBeImage/blob/master/LICENSE.MIT</PackageLicenseUrl>
+        <RepositoryUrl>https://github.com/presire/GetBeImage</RepositoryUrl>
     </PropertyGroup>
     <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
       <PlatformTarget>x64</PlatformTarget>
@@ -25,12 +29,12 @@
 
 
     <ItemGroup>
-        <PackageReference Include="Avalonia" Version="11.0.6"/>
-        <PackageReference Include="Avalonia.Desktop" Version="11.0.6"/>
-        <PackageReference Include="Avalonia.Themes.Fluent" Version="11.0.6"/>
-        <PackageReference Include="Avalonia.Fonts.Inter" Version="11.0.6"/>
+        <PackageReference Include="Avalonia" Version="11.2.2"/>
+        <PackageReference Include="Avalonia.Desktop" Version="11.2.2"/>
+        <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.2"/>
+        <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.2"/>
         <!--Condition below is needed to remove Avalonia.Diagnostics package from build output in Release configuration.-->
-        <PackageReference Condition="'$(Configuration)' == 'Debug'" Include="Avalonia.Diagnostics" Version="11.0.6"/>
+        <PackageReference Condition="'$(Configuration)' == 'Debug'" Include="Avalonia.Diagnostics" Version="11.2.2"/>
         <PackageReference Include="HtmlAgilityPack" Version="1.11.55" />
         <PackageReference Include="Material.Avalonia" Version="3.1.2" />
         <PackageReference Include="MessageBox.Avalonia" Version="3.1.5.1" />
